@@ -1,6 +1,8 @@
 package telran.students;
 
 import static org.junit.jupiter.api.Assertions.*;
+
+import java.time.LocalDate;
 import java.util.List;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -119,6 +121,36 @@ class StudentsMarksServiceTests {
 	void getStudentsAvgScoreGreaterTest() {
 		List<StudentAvgScore> expected = List.of(new StudentAvgScore(ID6, 100), new StudentAvgScore(ID5, 95));
 		assertIterableEquals(expected, studentsService.getStudentAvgScoreGreater(90));
+	}
+	@Test
+	void allGoodMarksSubject_getStudents() {
+		List<Student> expected = List.of(students[4], students[5]);
+		assertIterableEquals(expected, studentsService.getStudentsAllGoodMarksSubject(SUBJECT4, 80));
+		assertTrue(studentsService.getStudentsAllGoodMarksSubject(SUBJECT1, 100).isEmpty());
+	}
+	@Test
+	void marksAmountBetweenNumbers_getStudents() {
+		List<Student> expected = List.of(students[0], students[1]);
+		assertIterableEquals(expected, studentsService.getStudentsMarksAmountBetween(2, 4));
+		assertTrue(studentsService.getStudentsMarksAmountBetween(4, 6).isEmpty());
+	}
+	@Test
+	void studentMarksAtDates_getMarks() {
+		List<Mark> expected = List.of(new Mark(SUBJECT1, 65, DATE3),
+				 new Mark(SUBJECT4, 80, DATE4));
+		assertIterableEquals(expected, studentsService.getStudentMarksAtDates(ID3, DATE3, LocalDate.of(2024, 02, 20)));
+		assertTrue(studentsService.getStudentMarksAtDates(ID4, DATE1, DATE2).isEmpty());
+		assertThrowsExactly(StudentNotFoundException.class, () -> studentsService.getStudentMarksAtDates(ID1+100, DATE1, DATE2));
+	}
+	@Test
+	void bestStudents_getStudentsId() {
+		List<Long> expected = List.of(ID6, ID5);
+		assertIterableEquals(expected, studentsService.getBestStudents(2));
+	}
+	@Test
+	void worstStudents_getStudentsId() {
+		List<Long> expected = List.of(ID7, ID4);
+		assertIterableEquals(expected, studentsService.getWorstStudents(2));
 	}
 
 }

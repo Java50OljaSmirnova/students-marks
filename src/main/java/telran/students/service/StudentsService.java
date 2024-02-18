@@ -62,6 +62,6 @@ public interface StudentsService {
 	List<Student> getStudentsAllGoodMarksSubject(String subject, int thresholdScore);
 	List<Student> getStudentsMarksAmountBetween(int min, int max);
 	List<Mark> getStudentMarksAtDates(long id, LocalDate from, LocalDate to);
-	List<String> getBestStudents(int nStudents);
-	List<String> getWorstStudents(int nStudents);
+	List<Long> getBestStudents(int nStudents);
+	List<Long> getWorstStudents(int nStudents);
 }

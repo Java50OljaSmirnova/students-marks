@@ -110,7 +110,7 @@ public class StudentsServiceImpl implements StudentsService {
 
 	@Override
 	public List<Student> getStudentsFewMarks(int nMarks) {
-		List<IdPhone> idPhones = studentRepo.fndeFewMarks(nMarks);
+		List<IdPhone> idPhones = studentRepo.findFewMarks(nMarks);
 		List<Student> res = idPhonesToStudents(idPhones);
 		log.debug("student having amount of marks less than {} are {}", nMarks, res);
 		return res;
@@ -206,44 +206,76 @@ public class StudentsServiceImpl implements StudentsService {
 
 	@Override
 	public List<Student> getStudentsAllGoodMarksSubject(String subject, int thresholdScore) {
-		// TODO the same as the method getStudentsAllGoodMarks but for a given subject
-		// consider additional condition for "subject" in the query object
-		return null;
+		List<IdPhone> idPhones = studentRepo.findAllGoodMarksSuject(subject, thresholdScore);
+		List<Student> res = idPhonesToStudents(idPhones);
+		log.debug("students having score greater than {} on subject {} are {}", thresholdScore, subject, res);
+		return res;
 	}
 
 	@Override
 	public List<Student> getStudentsMarksAmountBetween(int min, int max) {
-		// TODO get students having amount of marks in the closed range [min, max]
-		// consider using operator $and inside $expr object like $expr:{$and:[{....},{...}]
-		//{....} - contains the object similar to the query of repository method List<IdPhone> findFewMarks(int nMarks);
-		return null;
+		List<IdPhone> idPhones = studentRepo.findMarksAmountBetween(min, max);
+		List<Student> res = idPhonesToStudents(idPhones);
+		log.debug("student having amount of marks in the closed range min {}, max {} are {}", min, max, res);
+		return res;
 	}
 
 	@Override
 	public List<Mark> getStudentMarksAtDates(long id, LocalDate from, LocalDate to) {
-		// TODO gets only marks on the dates in a closed range [from, to]
-		// of a given student (the same as getStudentsMarksSubject just different match operation
-		// think of DRY (Don't Repeat Yourself)
-		return null;
+		
+		if(!studentRepo.existsById(id)) {
+			throw new StudentNotFoundException();
+		}
+		MatchOperation matchStudentOperation = Aggregation.match(Criteria.where("id").is(id));
+		UnwindOperation unwindOperation = Aggregation.unwind("marks");
+		MatchOperation matchSubject = Aggregation.match(Criteria.where("marks.date").gte(from.atStartOfDay())
+				.lt(to.atStartOfDay()));
+		ProjectionOperation projectOperation = Aggregation.project("marks.subject", 
+				"marks.score", "marks.date");
+		Aggregation pipeline = Aggregation.newAggregation(matchStudentOperation, unwindOperation, 
+				matchSubject, projectOperation);
+		var aggregationResult = mongoTemplate.aggregate(pipeline, StudentDoc.class, Document.class);
+		List<Document> documents = aggregationResult.getMappedResults();
+		log.debug("received {} documents", documents.size());
+		List<Mark> res = documents.stream().map(d -> new Mark(d.getString("subject"), 
+				d.getInteger("score"), d.getDate("date").toInstant()
+				.atZone(ZoneId.systemDefault()).toLocalDate())).toList();
+		log.debug("marks of student {} from {} to {} are {}",  id, from, to, res);
+		return res;
+
 	}
 
 	@Override
-	public List<String> getBestStudents(int nStudents) {
-		//gets list of a given number of the best students
-		//Best students are the ones who have most scores greater than 80
-		//consider aggregation method count() instead of avg() that we have used at CW #72
-		// and LimitOperation as additional AggregationOperation
-		return null;
+	public List<Long> getBestStudents(int nStudents) {
+		UnwindOperation unwindOperation = Aggregation.unwind("marks");
+		MatchOperation matchOperation = Aggregation.match(Criteria.where("marks.score").gt(80));
+		GroupOperation groupOperation = Aggregation.group("id").count().as("count");
+		SortOperation sortOperation = Aggregation.sort(Direction.DESC, "count");
+		LimitOperation limitOperation = Aggregation.limit(nStudents);
+		Aggregation pipeline = Aggregation.newAggregation(unwindOperation,matchOperation, groupOperation,
+				sortOperation, limitOperation);
+		var aggregationResult = mongoTemplate.aggregate(pipeline, StudentDoc.class, Document.class);
+		List<Document> documents = aggregationResult.getMappedResults();
+		List<Long> res = documents.stream().map(d -> d.getLong("_id")).toList();
+		log.debug("{} students with best scores are {}", nStudents, res);
+		return res;
 	}
 
 	@Override
-	public List<String> getWorstStudents(int nStudents) {
-		// TODO gets list of a given number of the worst students
-		//Worst students are the ones who have least sum's of all scores
-		//Students who have no scores at all should be considered as worst
-		//instead of GroupOperation to apply AggregationExpression
-		// (with AccumulatorOperators.Sum) and
-		// ProjectionOperation for adding new fields with computed values from AggregationExpression
-		return null;
+	public List<Long> getWorstStudents(int nStudents) {
+		 UnwindOperation unwindOperation = Aggregation.unwind("marks");
+		 AggregationExpression agExpres = AccumulatorOperators.Sum.sumOf("marks.score");
+		 ProjectionOperation projectOperation = Aggregation.project("id")
+		            .and(agExpres).as("totalScore");
+		 SortOperation sortOperation = Aggregation.sort(Direction.ASC, "totalScore");
+		 LimitOperation limitOperation = Aggregation.limit(nStudents);
+		 Aggregation pipeline = Aggregation.newAggregation(unwindOperation, projectOperation,
+		            sortOperation, limitOperation);
+		 var aggregationResult = mongoTemplate.aggregate(pipeline, StudentDoc.class, Document.class);
+		 List<Document> documents = aggregationResult.getMappedResults();
+	    List<Long> res = documents.stream().map(d -> d.getLong("_id")).toList();
+	    log.debug("{} students with worst scores are {}", nStudents, res);
+	    return res;
+	
 	}
 }
