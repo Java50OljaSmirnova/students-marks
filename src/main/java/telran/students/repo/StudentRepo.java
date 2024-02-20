@@ -27,7 +27,7 @@ public interface StudentRepo extends MongoRepository<StudentDoc, Long>{
 	List<IdPhone> findFewMarks(int nMarks);
 	@Query("{$and:[{marks:{$elemMatch:{$and:[{score:{$gt:?1}},{subject:{$eq:?0}}]}}},{marks:{$not:{$elemMatch:{score:{$lte:?1}}}}}]}")
 	List<IdPhone> findAllGoodMarksSuject(String subject, int thresholdScore);
-	@Query("{$expr:{$and:[{$gt:[{$size:$marks}, ?0]},{$lt:[{$size:$marks}, ?1]}]}}")
+	@Query("{$expr:{$and:[{$gte:[{$size:$marks}, ?0]},{$lte:[{$size:$marks}, ?1]}]}}")
 	List<IdPhone> findMarksAmountBetween(int min, int max);
 
 }

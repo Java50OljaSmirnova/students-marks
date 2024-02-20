@@ -7,52 +7,66 @@ import java.util.List;
 
 import org.bson.Document;
 import org.springframework.data.domain.Sort.*;
-import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.*;
 import org.springframework.data.mongodb.core.aggregation.*;
-import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.*;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import org.springframework.dao.DuplicateKeyException;
+
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import telran.students.dto.Mark;
-import telran.students.dto.Student;
-import telran.students.dto.StudentAvgScore;
+import telran.students.dto.*;
 import telran.students.exceptions.StudentIllegalStateException;
 import telran.students.exceptions.StudentNotFoundException;
 import telran.students.model.StudentDoc;
-import telran.students.repo.IdPhone;
-import telran.students.repo.StudentRepo;
+import telran.students.repo.*;
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class StudentsServiceImpl implements StudentsService {
+	private static final String MARKS_SCORE_FIELD = "marks.score";
+	private static final String ID_FIELD = "id";
+	private static final String SUM_SCORES_FIELD = "sumScore";
+	private static final String MARKS_FIELD = "marks";
+	private static final String COUNT_FIELD = "count";
+	private static final String ID_DOCUMENT_FIELD = "_id";
+	private static final int BEST_STUDENTS_MARK_THRESHOLD = 80;
+	private static final String AVG_SCORE_FIELD = "avgScore";
+	private static final String MARKS_SUBJECT_FIELD = "marks.subject";
+	private static final String MARKS_DATE_FIELD = "marks.date";
+	private static final String SCORE_FIELD = "score";
+	private static final String DATE_FIELD = "date";
+	private static final String SUBJECT_FIELD = "subject";
 	final StudentRepo studentRepo;
 	final MongoTemplate mongoTemplate;
+	FindAndModifyOptions options = new FindAndModifyOptions().returnNew(true).upsert(false);
+	
 	@Override
-	@Transactional
 	public Student addStudent(Student student) {
 		long id = student.id();
-		if(studentRepo.existsById(id)) {
-			log.error("student with id {} already exists", id);
+		try {
+			mongoTemplate.insert(new StudentDoc(student));
+		}catch(DuplicateKeyException e) {
+			log.error("student with id : {} already exists", id);
 			throw new StudentIllegalStateException();
 		}
-		StudentDoc studentDoc = new StudentDoc(student);
-		studentRepo.save(studentDoc);
-		log.debug("student {} has been saved", student);
+		log.debug("student {} has been added", student);
 		return student;
 	}
 
 	@Override
 	public Mark addMark(long id, Mark mark) {
-		StudentDoc studentDoc = studentRepo.findById(id)
-				.orElseThrow(() -> new StudentNotFoundException());
-		List<Mark> marks = studentDoc.getMarks();
-		log.debug("student with id {}, has marks {} before adding new one",
-				id, marks);
-		marks.add(mark);
-		StudentDoc savedStudent = studentRepo.save(studentDoc);
-		log.debug("new marks after saving are {}", savedStudent.getMarks());
+		Query query = new Query(Criteria.where(ID_FIELD).is(id));
+		Update update = new Update();
+		update.push(MARKS_FIELD, mark);
+		StudentDoc studentDoc = mongoTemplate.findAndModify(query, update, options, StudentDoc.class);
+		if(studentDoc == null) {
+			log.error("student with id: {} not found", id);
+			throw new StudentNotFoundException();
+		}
+		log.debug("mark {} has been added for student with id {}", mark, id);
 		return mark;
 	}
 
@@ -70,10 +84,14 @@ public class StudentsServiceImpl implements StudentsService {
 
 	@Override
 	public Student removeStudent(long id) {
-		Student student = getStudent(id);
-		studentRepo.deleteById(id);
-		log.debug("student {} has been removed", student);
-		return student;
+		Query query = new Query(Criteria.where(ID_FIELD).is(id));
+		StudentDoc studentDoc = mongoTemplate.findAndRemove(query, StudentDoc.class);
+		if(studentDoc == null) {
+			log.error("student with id {} not found", id);
+			throw new StudentNotFoundException();
+		}
+		log.debug("student with id {} has been removed", id);
+		return studentDoc.build();
 	}
 
 	@Override
@@ -167,39 +185,44 @@ public class StudentsServiceImpl implements StudentsService {
 
 	@Override
 	public List<Mark> getStudentMarksSubject(long id, String subject) {
+		MatchOperation matchSubject = Aggregation.match(Criteria.where(MARKS_SUBJECT_FIELD).is(subject));
+		List<Mark> res = getStudentMarks(id, matchSubject);
+		log.debug("marks of subject {} of student {} ar {}", subject, id, res);
+		return res;
+	}
+
+	private List<Mark> getStudentMarks(long id, MatchOperation matchMarks) {
 		if(!studentRepo.existsById(id)) {
 			throw new StudentNotFoundException();
 		}
-		MatchOperation matchStudentOperation = Aggregation.match(Criteria.where("id").is(id));
-		UnwindOperation unwindOperation = Aggregation.unwind("marks");
-		MatchOperation matchSubject = Aggregation.match(Criteria.where("marks.subject").is(subject));
-		ProjectionOperation projectOperation = Aggregation.project("marks.subject", 
-				"marks.score", "marks.date");
+		MatchOperation matchStudentOperation = Aggregation.match(Criteria.where(ID_FIELD).is(id));
+		UnwindOperation unwindOperation = Aggregation.unwind(MARKS_FIELD);
+		ProjectionOperation projectOperation = Aggregation.project(MARKS_SUBJECT_FIELD, 
+				MARKS_SCORE_FIELD, MARKS_DATE_FIELD);
 		Aggregation pipeline = Aggregation.newAggregation(matchStudentOperation, unwindOperation, 
-				matchSubject, projectOperation);
+				matchMarks, projectOperation);
 		var aggregationResult = mongoTemplate.aggregate(pipeline, StudentDoc.class, Document.class);
 		List<Document> documents = aggregationResult.getMappedResults();
 		log.debug("received {} documents", documents.size());
-		List<Mark> res = documents.stream().map(d -> new Mark(d.getString("subject"), 
-				d.getInteger("score"), d.getDate("date").toInstant()
+		List<Mark> res = documents.stream().map(d -> new Mark(d.getString(SUBJECT_FIELD), 
+				d.getInteger(SCORE_FIELD), d.getDate(DATE_FIELD).toInstant()
 				.atZone(ZoneId.systemDefault()).toLocalDate())).toList();
-		log.debug("marks of subject {} of student {} ar {}", subject, id, res);
 		return res;
 	}
 
 	@Override
 	public List<StudentAvgScore> getStudentAvgScoreGreater(int avgThreshold) {
-		UnwindOperation unwindOperation = Aggregation.unwind("marks");
-		GroupOperation groupOperation = Aggregation.group("id").avg("marks.score").as("avgScore");
-		MatchOperation matchOperation = Aggregation.match(Criteria.where("avgScore")
+		UnwindOperation unwindOperation = Aggregation.unwind(MARKS_FIELD);
+		GroupOperation groupOperation = Aggregation.group(ID_FIELD).avg(MARKS_SCORE_FIELD).as(AVG_SCORE_FIELD);
+		MatchOperation matchOperation = Aggregation.match(Criteria.where(AVG_SCORE_FIELD)
 				.gt(avgThreshold));
-		SortOperation sortOperation = Aggregation.sort(Direction.DESC, "avgScore");
+		SortOperation sortOperation = Aggregation.sort(Direction.DESC, AVG_SCORE_FIELD);
 		Aggregation pipeline = Aggregation.newAggregation(unwindOperation, groupOperation, matchOperation,
 				sortOperation);
 		var aggregationResult = mongoTemplate.aggregate(pipeline, StudentDoc.class, Document.class);
 		List<Document> documents = aggregationResult.getMappedResults();
-		List<StudentAvgScore> res = documents.stream().map(d -> new StudentAvgScore(d.getLong("_id")
-				, d.getDouble("avgScore").intValue())).toList();
+		List<StudentAvgScore> res = documents.stream().map(d -> new StudentAvgScore(d.getLong(ID_DOCUMENT_FIELD)
+				, d.getDouble(AVG_SCORE_FIELD).intValue())).toList();
 		log.debug("students with avg scores greater than {} are {}", avgThreshold, res);
 		return res;
 	}
@@ -222,59 +245,43 @@ public class StudentsServiceImpl implements StudentsService {
 
 	@Override
 	public List<Mark> getStudentMarksAtDates(long id, LocalDate from, LocalDate to) {
-		
-		if(!studentRepo.existsById(id)) {
-			throw new StudentNotFoundException();
-		}
-		MatchOperation matchStudentOperation = Aggregation.match(Criteria.where("id").is(id));
-		UnwindOperation unwindOperation = Aggregation.unwind("marks");
-		MatchOperation matchSubject = Aggregation.match(Criteria.where("marks.date").gte(from.atStartOfDay())
-				.lt(to.atStartOfDay()));
-		ProjectionOperation projectOperation = Aggregation.project("marks.subject", 
-				"marks.score", "marks.date");
-		Aggregation pipeline = Aggregation.newAggregation(matchStudentOperation, unwindOperation, 
-				matchSubject, projectOperation);
-		var aggregationResult = mongoTemplate.aggregate(pipeline, StudentDoc.class, Document.class);
-		List<Document> documents = aggregationResult.getMappedResults();
-		log.debug("received {} documents", documents.size());
-		List<Mark> res = documents.stream().map(d -> new Mark(d.getString("subject"), 
-				d.getInteger("score"), d.getDate("date").toInstant()
-				.atZone(ZoneId.systemDefault()).toLocalDate())).toList();
-		log.debug("marks of student {} from {} to {} are {}",  id, from, to, res);
+		MatchOperation matchDates = Aggregation.match(Criteria.where(MARKS_DATE_FIELD).gte(from)
+				.lte(to));
+		List<Mark> res = getStudentMarks(id, matchDates);
+		log.debug("marks of the student  with id {} on dates[{}-{}] are {}",  id, from, to, res);
 		return res;
 
 	}
 
 	@Override
 	public List<Long> getBestStudents(int nStudents) {
-		UnwindOperation unwindOperation = Aggregation.unwind("marks");
-		MatchOperation matchOperation = Aggregation.match(Criteria.where("marks.score").gt(80));
-		GroupOperation groupOperation = Aggregation.group("id").count().as("count");
-		SortOperation sortOperation = Aggregation.sort(Direction.DESC, "count");
+		UnwindOperation unwindOperation = Aggregation.unwind(MARKS_FIELD);
+		MatchOperation matchOperation = Aggregation.match(Criteria.where(MARKS_SCORE_FIELD).gt(BEST_STUDENTS_MARK_THRESHOLD));
+		GroupOperation groupOperation = Aggregation.group(ID_FIELD).count().as(COUNT_FIELD);
+		SortOperation sortOperation = Aggregation.sort(Direction.DESC, COUNT_FIELD);
 		LimitOperation limitOperation = Aggregation.limit(nStudents);
 		Aggregation pipeline = Aggregation.newAggregation(unwindOperation,matchOperation, groupOperation,
 				sortOperation, limitOperation);
 		var aggregationResult = mongoTemplate.aggregate(pipeline, StudentDoc.class, Document.class);
 		List<Document> documents = aggregationResult.getMappedResults();
-		List<Long> res = documents.stream().map(d -> d.getLong("_id")).toList();
-		log.debug("{} students with best scores are {}", nStudents, res);
+		List<Long> res = documents.stream().map(d -> d.getLong(ID_DOCUMENT_FIELD)).toList();
+		log.debug("{} students with most scoresgreater than {} are {}", nStudents, BEST_STUDENTS_MARK_THRESHOLD, res);;
 		return res;
 	}
 
 	@Override
 	public List<Long> getWorstStudents(int nStudents) {
-		 UnwindOperation unwindOperation = Aggregation.unwind("marks");
-		 AggregationExpression agExpres = AccumulatorOperators.Sum.sumOf("marks.score");
-		 ProjectionOperation projectOperation = Aggregation.project("id")
-		            .and(agExpres).as("totalScore");
-		 SortOperation sortOperation = Aggregation.sort(Direction.ASC, "totalScore");
+		 AggregationExpression agExpres = AccumulatorOperators.Sum.sumOf(MARKS_SCORE_FIELD);
+		 ProjectionOperation projectOperation = Aggregation.project(ID_FIELD)
+		            .and(agExpres).as(SUM_SCORES_FIELD);
+		 SortOperation sortOperation = Aggregation.sort(Direction.ASC, SUM_SCORES_FIELD);
 		 LimitOperation limitOperation = Aggregation.limit(nStudents);
-		 Aggregation pipeline = Aggregation.newAggregation(unwindOperation, projectOperation,
+		 Aggregation pipeline = Aggregation.newAggregation(projectOperation,
 		            sortOperation, limitOperation);
 		 var aggregationResult = mongoTemplate.aggregate(pipeline, StudentDoc.class, Document.class);
 		 List<Document> documents = aggregationResult.getMappedResults();
-	    List<Long> res = documents.stream().map(d -> d.getLong("_id")).toList();
-	    log.debug("{} students with worst scores are {}", nStudents, res);
+	    List<Long> res = documents.stream().map(d -> d.getLong(ID_DOCUMENT_FIELD)).toList();
+	    log.debug("{} worst students are {}", nStudents, res);
 	    return res;
 	
 	}

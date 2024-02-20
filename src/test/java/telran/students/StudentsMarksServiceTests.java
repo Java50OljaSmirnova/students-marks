@@ -130,9 +130,9 @@ class StudentsMarksServiceTests {
 	}
 	@Test
 	void marksAmountBetweenNumbers_getStudents() {
-		List<Student> expected = List.of(students[0], students[1]);
-		assertIterableEquals(expected, studentsService.getStudentsMarksAmountBetween(2, 4));
-		assertTrue(studentsService.getStudentsMarksAmountBetween(4, 6).isEmpty());
+		List<Student> expected = List.of(students[0], students[1], students[3]);
+		assertIterableEquals(expected, studentsService.getStudentsMarksAmountBetween(2, 3));
+		assertTrue(studentsService.getStudentsMarksAmountBetween(5, 7).isEmpty());
 	}
 	@Test
 	void studentMarksAtDates_getMarks() {
@@ -144,12 +144,12 @@ class StudentsMarksServiceTests {
 	}
 	@Test
 	void bestStudents_getStudentsId() {
-		List<Long> expected = List.of(ID6, ID5);
+		List<Long> expected = List.of(ID6, ID2);
 		assertIterableEquals(expected, studentsService.getBestStudents(2));
 	}
 	@Test
 	void worstStudents_getStudentsId() {
-		List<Long> expected = List.of(ID7, ID4);
+		List<Long> expected = List.of(ID7, ID5);
 		assertIterableEquals(expected, studentsService.getWorstStudents(2));
 	}
 
